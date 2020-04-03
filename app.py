@@ -1,10 +1,7 @@
 import re
 
 from flask import Flask, render_template, request
-from telegramBot import TelegramBot, CHAT_ID, API_KEY
-
-global telegram_bot
-telegram_bot = TelegramBot(api_key=API_KEY, chat_with=CHAT_ID)
+from telegramBot import telegram_bot
 
 app = Flask(__name__)
 

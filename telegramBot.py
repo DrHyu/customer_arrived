@@ -261,9 +261,11 @@ class TelegramBot():
         update.message.reply_text('Welcome !')
 
 
+telegram_bot = TelegramBot(api_key=API_KEY, chat_with=CHAT_ID)
+
 if __name__ == '__main__':
-    telegram_bot = TelegramBot(api_key=API_KEY, chat_with=CHAT_ID)
-    telegram_bot .start()
+    # telegram_bot = TelegramBot(api_key=API_KEY, chat_with=CHAT_ID)
+
     try:
         telegram_bot.add_new_order(2222, 2)
         telegram_bot.add_new_order(1111, 1)
