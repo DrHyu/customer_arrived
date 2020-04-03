@@ -8,8 +8,6 @@ app = Flask(__name__)
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    print("fkdsjaf;lkasjdf;lkajsd;flkajs;lk")
-    print(request.args.get('order_id'))
     return render_template('index.html', order_id=request.args.get('order_id'))
 
 

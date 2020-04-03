@@ -147,7 +147,6 @@ class TelegramBot():
             # Find order in pending order list
             order = None
             for o in self.pending_orders:
-                print(o)
                 if o.order_id == found_order_id:
                     order = o
                     break
