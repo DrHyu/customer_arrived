@@ -1,0 +1,52 @@
+{% extends 'base.html' %} 
+
+{% block head %} 
+
+{% endblock %} 
+
+{% block body %}
+
+<div class="container" >
+    <div class="row  justify-content-center" >
+    <img src="static/logo.png" alt="Italian Trulli">
+    </div>
+    <div class="row  justify-content-center" >
+        <form action="{{ url_for('submit_form') }}" method ="get">
+            <div class="form-group">
+                <label for="purchaseCode">Codi de venta / Codigo de venta</label>
+                {% if order_id %}
+                    <input type="text" class="form-control" id="purchaseCode" aria-describedby="purchaseCodeHelp" placeholder=" Insereixi el codi de venta" name="purchase_code" value= {{ order_id }} disabled>
+                {% else %}
+                    <input type="text" class="form-control" id="purchaseCode" aria-describedby="purchaseCodeHelp" placeholder=" Insereixi el codi de venta" name="purchase_code">
+                {% endif %}
+                
+                <small id="purchaseCodeHelp" class="form-text text-muted">Codi enviat per WhatsApp</small>
+            </div>
+            <div class="form-group" id=test_group>
+                <label for="parking_selct_group">En quin parking es troba ?</label>
+                <div id=parking_selct_group aria-describedby="parking_select_group_describedby">
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="parking_slot" id="inlineRadio1" value="option1">
+                        <label class="form-check-label" for="inlineRadio1">Parking 1</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="parking_slot" id="inlineRadio2" value="option2">
+                        <label class="form-check-label" for="inlineRadio2">Parking 2</label>
+                    </div>
+                </div>
+                <small id="parking_select_group_describedby">Els cartells indiquen el numero coresponent</small>
+            </div>
+
+            <div class="form-group text-center" >
+                <button type="submit" class="btn btn-primary" aria-describedby="submit_button_describedby">Avisar al Farmaceutic</button>
+                <small id="submit_button_describedby" class="form-text text-muted">Avisar al farmaceutic per recollir la comanda</small>
+            </div>
+        </form>
+    </div>
+
+  </div>
+</div>
+
+
+
+{% endblock %}
