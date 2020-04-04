@@ -114,6 +114,7 @@ def stream(order_id):
                     break
 
             status = json_data['new_status']
+            logger.info("Received order {} status update {}".format(order_id, status))
 
             txt = ""
             if status is None:

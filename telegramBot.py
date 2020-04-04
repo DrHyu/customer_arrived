@@ -335,7 +335,7 @@ class TelegramBot():
                       'new_status': new_status, 'prev_status': order.status}
             self._zmq_bc_sock.send_json(update)
 
-            logger.debug('Updating status {}'.format(update))
+            logger.info('Updating status {}'.format(update))
 
             order.status = new_status
 
