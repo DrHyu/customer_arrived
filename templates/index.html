@@ -16,7 +16,7 @@
             <div class="form-group">
                 <label for="purchaseCode">Codi de venta / Codigo de venta</label>
                 {% if order_id %}
-                    <input type="text" class="form-control" id="purchaseCode" aria-describedby="purchaseCodeHelp" placeholder=" Insereixi el codi de venta" name="purchase_code" value= {{ order_id }} disabled>
+                    <input type="text" class="form-control" id="purchaseCode" aria-describedby="purchaseCodeHelp" placeholder=" Insereixi el codi de venta" name="purchase_code" value= {{ order_id }} readonly="readonly">
                 {% else %}
                     <input type="text" class="form-control" id="purchaseCode" aria-describedby="purchaseCodeHelp" placeholder=" Insereixi el codi de venta" name="purchase_code">
                 {% endif %}
