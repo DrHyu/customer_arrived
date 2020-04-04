@@ -109,12 +109,13 @@ def stream(order_id):
                 # wait untill there is an update for our order_id
                 json_data = json.loads(sock.recv())
                 if 'order_id' in json_data \
-                        and 'new_status' in json_data\
+                        and 'status' in json_data\
                         and json_data['order_id'] == order_id:
                     break
 
-            status = json_data['new_status']
-            logger.info("Received order {} status update {}".format(order_id, status))
+            status = json_data['status']
+            logger.info(
+                "Received order {} status update {}".format(order_id, status))
 
             txt = ""
             if status is None:
