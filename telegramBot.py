@@ -1,15 +1,18 @@
+''' my telegram bot '''
+
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# This program is dedicated to the public domain under the CC0 license.
 
-"""
-Basic example for a bot that uses inline keyboards.
-"""
 import logging
 import time
 import re
 
+
 from threading import Lock, Thread
+
+import sqlite3
+import zmq
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler
 
@@ -23,12 +26,21 @@ logger = logging.getLogger(__name__)
 CHAT_ID = 968017190
 API_KEY = "1173915016:AAFa-G9Jo-gBzGXSIU38EIqUGDcVus1kZhQ"
 
+ZMQ_RX_PORT = "tcp://127.0.0.1:5678"
+ZMQ_BC_PORT = "tcp://127.0.0.1:5680"
+
 
 class Order():
-
+    ''' order representation '''
     ORDER_REMINDER_TIMEOUT = 5
     ORDER_POSPONED_DURATION = 120
     ORDER_MAX_DURATION = 600
+
+    ORDER_STATUS_PROCESSING = 0
+    ORDER_STATUS_SENT = 1
+    ORDER_STATUS_ACCEPTED = 2
+    ORDER_STATUS_POSPONED = 3
+    ORDER_STATUS_CANCELED = 4
 
     def __init__(self, order_id, parking_slot):
 
@@ -38,6 +50,7 @@ class Order():
         self.last_reminder_time = None
         self.pospone_until = None
 
+        self.status = self.ORDER_STATUS_PROCESSING
         self.message = None
 
     def __str__(self):
@@ -48,7 +61,7 @@ class Order():
 
 
 class TelegramBot():
-
+    ''' telegram bot '''
     ORDER_ACCEPTED = 0
     ORDER_DELAYED = 1
     ORDER_CANCELED = 2
@@ -59,10 +72,7 @@ class TelegramBot():
 
     def __init__(self, api_key=None, chat_with=CHAT_ID):
 
-        logger.info(
-            'NEW TELEGRAM BOT ISNTANCE ----------------------------------------------'.format())
-
-        logger.fatal('{}'.format(__name__))
+        logger.info('Initializing Telegram Bot')
 
         self.chat_with = chat_with
 
@@ -76,13 +86,6 @@ class TelegramBot():
         self._updater = None
 
         self._api_key = api_key
-        self.start()
-
-    def start(self):
-
-        if not self._end_lock.acquire(blocking=False) or self._thread != None:
-            logger.fatal('Thread already runing'.format())
-            return
 
         self._bot = Bot(self._api_key)
         self._updater = Updater(self._api_key, use_context=True)
@@ -95,16 +98,65 @@ class TelegramBot():
         self._updater.dispatcher.add_handler(CommandHandler('help', self.help))
         self._updater.dispatcher.add_error_handler(self.error)
 
+        # ZeroMQ Context
+        self._zmq_context = zmq.Context()
+
+        # Define a socket through wich flask will pass the new orders
+        self._zmq_rx_sock = self._zmq_context.socket(zmq.REP)
+        self._zmq_rx_sock.bind(ZMQ_RX_PORT)
+        logger.info(
+            'New socket @ {} to receive new orders.'.format(ZMQ_RX_PORT))
+
+        # Define a broadcast port where the updates to orders are published
+        self._zmq_bc_sock = self._zmq_context.socket(zmq.PUB)
+        self._zmq_bc_sock.bind(ZMQ_BC_PORT)
+        logger.info(
+            'New socket @ {} to broadcast orders status.'.format(ZMQ_BC_PORT))
+
+        logger.info('Init finished succesfully.')
+
+        self.start()
+
+    def start(self):
+
+        if not self._end_lock.acquire(blocking=False) or self._thread is not None:
+            logger.fatal('Thread already runing'.format())
+            return
+
+        logger.info('Starting telegram updater...')
         # Launch updater thread
         self._updater.start_polling()
 
         self._thread = Thread(target=self._run)
         self._thread.daemon = True
+        logger.info('Starting bot thread...')
         self._thread.start()
+
+        logger.info('All runing !')
 
     def _run(self):
         while True:
+
+            # Send pending messages
             self.send_pending_messages()
+
+            # Check if there is a new message request
+            try:
+                # Get req data
+                req_json = self._zmq_rx_sock.recv_json(flags=zmq.NOBLOCK)
+
+                if 'order_id' in req_json and 'parking_slot' in req_json:
+                    # Send response
+                    self._zmq_rx_sock.send_json({'status': True})
+                    # Add new order
+                    self.add_new_order(
+                        req_json['order_id'], req_json['parking_slot'])
+                else:
+                    logger.error('Strange request data {}'.format(req_json))
+            # Nothing found
+            except zmq.ZMQError as e:
+                pass
+
             time.sleep(1)
             # Exit condition
             if self._end_lock.acquire(blocking=False):
@@ -115,9 +167,15 @@ class TelegramBot():
             logger.fatal('Thread already finished'.format())
         else:
             self._end_lock.release()
+
+            logger.info(
+                'Waiting for telegram updater to finish...'.format())
             self._updater.stop()
-            self._thread = None
-            time.sleep(1)
+
+            logger.info('Waiting for telegram bot to finish...'.format())
+            self._thread.join()
+
+            logger.info('Telegram bot stopped'.format())
 
     def runing(self):
         return self._end_lock.locked()
@@ -126,13 +184,13 @@ class TelegramBot():
         with self.pending_orders_lock:
             self.pending_orders.append(Order(order_id, parking_slot))
 
-    def custom_keyboard_answer(self, update, context):
+    def custom_keyboard_answer(self, update, _):
         query = update.callback_query
-        # print(query)
+
         query.answer()
 
-        match = re.search("Comanda (\w+)",
-                          query.message.text)
+        # Get order ID from the query
+        match = re.search(r'Comanda (\w+)', query.message.text)
         found_order_id = None
         if match:
             found_order_id = int(match.group(1))
@@ -158,19 +216,30 @@ class TelegramBot():
                 return
 
             response = "Comanda {} @ parking {}: -> ".format(
-                o.order_id, o.parking_slot)
+                order.order_id, order.parking_slot)
 
             if int(query.data) == TelegramBot.ORDER_ACCEPTED:
+                self.update_orders_status(
+                    [[order, Order.ORDER_STATUS_ACCEPTED]])
                 self.pending_orders.remove(order)
+                order.pospone_until = None
                 response += "COMPLETADA"
+                query.edit_message_text(text=response)
             elif int(query.data) == TelegramBot.ORDER_DELAYED:
+                self.update_orders_status(
+                    [[order, Order.ORDER_STATUS_POSPONED]])
                 order.pospone_until = time.time() + Order.ORDER_POSPONED_DURATION
                 response += "POSPOSADA (2mins)"
+                query.edit_message_text(
+                    text=response, reply_markup=InlineKeyboardMarkup(TelegramBot.KEYBOARD))
+
             elif int(query.data) == TelegramBot.ORDER_CANCELED:
+                self.update_orders_status(
+                    [[order, Order.ORDER_STATUS_CANCELED]])
                 self.pending_orders.remove(order)
                 response += "CANCELADA"
-
-            query.edit_message_text(text=response)
+                order.pospone_until = None
+                query.edit_message_text(text=response)
 
     def send_pending_messages(self):
 
@@ -179,7 +248,9 @@ class TelegramBot():
             old_messages_updated = 0
 
             reply_markup = InlineKeyboardMarkup(TelegramBot.KEYBOARD)
-            for o in self.pending_orders:
+
+            status_to_update = []
+            for o in self.pending_orders[:]:
 
                 # First message
                 if o.message is None:
@@ -191,6 +262,7 @@ class TelegramBot():
                     o.last_reminder_time = time.time()
 
                     new_messages_sent += 1
+                    status_to_update.append([o, Order.ORDER_STATUS_SENT])
 
                 elif time.time() - o.date_created > Order.ORDER_MAX_DURATION:
                     logger.debug(
@@ -208,6 +280,9 @@ class TelegramBot():
                     o.last_reminder_time = time.time()
                     o.pospone_until = None
                     old_messages_updated += 1
+
+                    status_to_update.append([o, Order.ORDER_STATUS_CANCELED])
+                    self.pending_orders.remove(o)
 
                 # If reminder timeout and not in pospone time
                 elif time.time() - o.last_reminder_time > Order.ORDER_REMINDER_TIMEOUT and not o.pospone_until:
@@ -227,6 +302,7 @@ class TelegramBot():
 
                     o.last_reminder_time = time.time()
                     old_messages_updated += 1
+
                 elif o.pospone_until and time.time() - o.pospone_until > Order.ORDER_POSPONED_DURATION:
                     logger.debug(
                         'Pospone has run out for id {}'.format(o.order_id))
@@ -239,9 +315,11 @@ class TelegramBot():
                     o.last_reminder_time = time.time()
                     o.pospone_until = None
                     old_messages_updated += 1
+
                 else:
                     pass
 
+            self.update_orders_status(status_to_update)
             # Send a dummy message and delete to trigger a user alter
             if new_messages_sent == 0 and old_messages_updated > 0:
                 msg = self._bot.sendMessage(
@@ -249,31 +327,32 @@ class TelegramBot():
                 self._bot.deleteMessage(
                     chat_id=msg.chat_id, message_id=msg.message_id)
 
-    def help(self, update, context):
+    def update_orders_status(self, new_statuses):
+
+        for (order, new_status) in new_statuses:
+            # Send a broadcast message with the new order status
+            self._zmq_bc_sock.send_json(
+                {'order_id': order.order_id, 'new_status': new_status, 'prev_status': order.status})
+
+            order.status = new_status
+
+    def help(self, update, _):
         update.message.reply_text("Use /start to test this bot.")
 
     def error(self, update, context):
         """Log Errors caused by Updates."""
         logger.warning('Update "%s" caused error "%s"', update, context.error)
 
-    def welcome(self, update, context):
+    def welcome(self, update, _):
         update.message.reply_text('Welcome !')
 
 
 telegram_bot = TelegramBot(api_key=API_KEY, chat_with=CHAT_ID)
 
 if __name__ == '__main__':
-    # telegram_bot = TelegramBot(api_key=API_KEY, chat_with=CHAT_ID)
-
     try:
-        telegram_bot.add_new_order(2222, 2)
-        telegram_bot.add_new_order(1111, 1)
-
-        start_time = time.time()
-        while time.time() - start_time < 30:
-            print("Runing ---" + str(time.time() - start_time))
-            telegram_bot.send_pending_messages()
-            time.sleep(2)
+        while(True):
+            time.sleep(1)
     finally:
         telegram_bot.stop()
 

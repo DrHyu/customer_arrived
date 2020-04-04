@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+
+{% block head %}
+
+{% endblock %}
+
+{% block body %}
+
+<div class="container">
+    <div class="row  justify-content-center">
+        <img src="static/logo.png" alt="Italian Trulli">
+    </div>
+    <div class="row  justify-content-center">
+        {% if failed %}
+        <h1> {{failed}} </h1i>
+        {% else %}
+        <h1><div id="target_div">Enviant missatge...</div></h1>
+        {% endif %}
+
+    </div>
+
+</div>
+</div>
+
+
+{% if not failed %}
+<script>
+    var targetContainer = document.getElementById("target_div");
+    var eventSource = new EventSource("/order_status/{{order_id}}")
+    eventSource.onmessage = function (e) {
+        targetContainer.innerHTML = e.data;
+    };
+</script>
+
+{% endif %}
+
+{% endblock %}
