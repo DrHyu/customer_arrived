@@ -331,8 +331,11 @@ class TelegramBot():
 
         for (order, new_status) in new_statuses:
             # Send a broadcast message with the new order status
-            self._zmq_bc_sock.send_json(
-                {'order_id': order.order_id, 'new_status': new_status, 'prev_status': order.status})
+            update = {'order_id': order.order_id,
+                      'new_status': new_status, 'prev_status': order.status}
+            self._zmq_bc_sock.send_json(update)
+
+            logger.debug('Updating status {}'.format(update))
 
             order.status = new_status
 
