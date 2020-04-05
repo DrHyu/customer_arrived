@@ -157,8 +157,6 @@ class TelegramBot():
             except zmq.ZMQError as e:
                 pass
 
-            self.broadcast_order_status()
-
             time.sleep(1)
             # Exit condition
             if self._end_lock.acquire(blocking=False):
@@ -221,26 +219,23 @@ class TelegramBot():
                 order.order_id, order.parking_slot)
 
             if int(query.data) == TelegramBot.ORDER_ACCEPTED:
-                # self.update_orders_status(
-                #     [[order, Order.ORDER_STATUS_ACCEPTED]])
-                order.status = Order.ORDER_STATUS_ACCEPTED
+                self.update_orders_status(
+                    [[order, Order.ORDER_STATUS_ACCEPTED]])
                 self.pending_orders.remove(order)
                 order.pospone_until = None
                 response += "COMPLETADA"
                 query.edit_message_text(text=response)
             elif int(query.data) == TelegramBot.ORDER_DELAYED:
-                # self.update_orders_status(
-                #     [[order, Order.ORDER_STATUS_POSPONED]])
-                order.status = Order.ORDER_STATUS_POSPONED
+                self.update_orders_status(
+                    [[order, Order.ORDER_STATUS_POSPONED]])
                 order.pospone_until = time.time() + Order.ORDER_POSPONED_DURATION
                 response += "POSPOSADA (2mins)"
                 query.edit_message_text(
                     text=response, reply_markup=InlineKeyboardMarkup(TelegramBot.KEYBOARD))
 
             elif int(query.data) == TelegramBot.ORDER_CANCELED:
-                # self.update_orders_status(
-                #     [[order, Order.ORDER_STATUS_CANCELED]])
-                order.status = Order.ORDER_STATUS_CANCELED
+                self.update_orders_status(
+                    [[order, Order.ORDER_STATUS_CANCELED]])
                 self.pending_orders.remove(order)
                 response += "CANCELADA"
                 order.pospone_until = None
@@ -254,7 +249,7 @@ class TelegramBot():
 
             reply_markup = InlineKeyboardMarkup(TelegramBot.KEYBOARD)
 
-            # status_to_update = []
+            status_to_update = []
             for o in self.pending_orders[:]:
 
                 # First message
@@ -267,8 +262,7 @@ class TelegramBot():
                     o.last_reminder_time = time.time()
 
                     new_messages_sent += 1
-                    # status_to_update.append([o, Order.ORDER_STATUS_SENT])
-                    o.status = Order.ORDER_STATUS_SENT
+                    status_to_update.append([o, Order.ORDER_STATUS_SENT])
 
                 elif time.time() - o.date_created > Order.ORDER_MAX_DURATION:
                     logger.debug(
@@ -287,8 +281,7 @@ class TelegramBot():
                     o.pospone_until = None
                     old_messages_updated += 1
 
-                    o.status = Order.ORDER_STATUS_CANCELED
-                    # status_to_update.append([o, Order.ORDER_STATUS_CANCELED])
+                    status_to_update.append([o, Order.ORDER_STATUS_CANCELED])
                     self.pending_orders.remove(o)
 
                 # If reminder timeout and not in pospone time
@@ -326,7 +319,7 @@ class TelegramBot():
                 else:
                     pass
 
-            # self.update_orders_status(status_to_update)
+            self.update_orders_status(status_to_update)
             # Send a dummy message and delete to trigger a user alter
             if new_messages_sent == 0 and old_messages_updated > 0:
                 msg = self._bot.sendMessage(
@@ -339,9 +332,8 @@ class TelegramBot():
         for (order, new_status) in new_statuses:
             # Send a broadcast message with the new order status
             update = {'order_id': order.order_id,
-                      'new_status': new_status, 'prev_status': order.status}
+                      'status': new_status}
             self._zmq_bc_sock.send_json(update)
-
             logger.info('Updating status {}'.format(update))
 
             order.status = new_status

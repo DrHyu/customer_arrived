@@ -5,7 +5,12 @@ import time
 import json
 import zmq
 
-from flask import Flask, render_template, request, Response
+
+from celery import Celery, signals
+from celery.utils.log import get_task_logger
+from flask_celery import make_celery
+
+from flask import Flask, render_template, request, Response, url_for, jsonify
 from datetime import datetime
 
 
@@ -14,8 +19,17 @@ logging.basicConfig(format='%(asctime)s %(levelname)s %(lineno)d:%(filename)s\
                     level=logging.INFO)
 
 logger = logging.getLogger(__name__)
+celery_logger = get_task_logger(__name__)
 
 app = Flask(__name__)
+
+app.config.update(
+    CELERY_BROKER_URL='redis://127.0.0.1:6379/0',
+    CELERY_RESULT_BACKEND='redis://127.0.0.1:6379/0'
+)
+
+# Initialize Celery
+celery = make_celery(app)
 
 ZMQ_TX_PORT = "tcp://127.0.0.1:5678"
 ZMQ_BC_PORT = "tcp://127.0.0.1:5680"
@@ -80,43 +94,52 @@ def submit_form():
         return render_template('submited.html', order_id=purchase_code)
 
 
-def wait_for_order_status_update(order_id):
-    ''' get order status from DB'''
-
-    result = None
-    if result:
-        return result.status
-    else:
-        return None
+###########################################################
+# CELERY STUFF
+###########################################################
 
 
-@app.route('/order_status/<int:order_id>')
-def stream(order_id):
-    def eventStream():
+@app.route('/get_order_status/<int:order_id>', methods=['POST'])
+def get_order_status(order_id):
+    logger.info('req to get order status for {}'.format(order_id))
+    task = fetch_order_update.delay(order_id)
+    return jsonify({}), 202, {'Location': url_for('taskstatus', task_id=task.id)}
 
-        # Create a new socket to listen to the order status updates
-        context = zmq.Context()
-        sock = context.socket(zmq.SUB)
 
-        # Define subscription and messages with prefix to accept.
-        sock.setsockopt(zmq.SUBSCRIBE, b'')
-        sock.connect(ZMQ_BC_PORT)
+@celery.task(bind=True, name='app.fetch_order_update')
+def fetch_order_update(self, order_id):
+    ''' wait for an order status update '''
+    print('fetch_order_update {}'.format(order_id) + '-'*30)
+    celery_logger.info('fetch_order_update {}'.format(order_id) + '-'*30)
+    context = zmq.Context()
+    sock = context.socket(zmq.SUB)
 
+    # Define subscription and messages with prefix to accept.
+    sock.setsockopt(zmq.SUBSCRIBE, b'')
+    sock.connect(ZMQ_BC_PORT)
+
+    old_status = None
+    txt = ""
+    celery_logger.info('fetch_order_update {}'.format(order_id) + '-'*30)
+
+    while True:
         while True:
-            # status = wait_for_order_status_update(order_id)
-            json_data = None
-            while True:
-                # wait untill there is an update for our order_id
-                json_data = json.loads(sock.recv())
-                if 'order_id' in json_data \
-                        and 'status' in json_data\
-                        and json_data['order_id'] == order_id:
-                    break
+            # wait untill there is an update for our order_id
+            json_data = json.loads(sock.recv())
+            celery_logger.info('fetched {}'.format(json_data) + '-'*30)
+            if 'order_id' in json_data \
+                    and 'status' in json_data\
+                    and json_data['order_id'] == order_id:
+                break
+            else:
+                self.update_state(state='PENDING', meta={})
 
-            status = json_data['status']
-            logger.info(
-                "Received order {} status update {}".format(order_id, status))
+        status = json_data['status']
+        logger.error(
+            "Received order {} status update {}".format(order_id, status))
 
+        if old_status != status:
+            old_status = status
             txt = ""
             if status is None:
                 txt = "error"
@@ -126,16 +149,44 @@ def stream(order_id):
                 txt = "Enviat"
             elif status == 2:
                 txt = "Preparant comanda"
+                break
             elif status == 3:
                 txt = "Comanda en espera"
             elif status == 4:
                 txt = "Comanda cancelada"
+                break
 
-            yield 'data: {}\n\n'.format(txt)
-            time.sleep(1)
+            self.update_state(state='PROGRESS', meta={'txt': txt})
 
-    return Response(eventStream(), mimetype="text/event-stream")
+        # Unsubscribe from socket
+        sock.disconnect()
+
+        # Will get here after an order has been transitioned to ready or canceled or timeout
+        return {'txt': txt}
+
+
+@app.route('/status/<task_id>')
+def taskstatus(task_id):
+    task = fetch_order_update.AsyncResult(task_id)
+
+    logger.info('task status {}'.format(task))
+    if task.state == 'PENDING':
+        response = {
+            'txt': "Esperant resposta ..."
+        }
+    elif task.state != 'FAILURE':
+        response = {
+            'txt': task.info.get('txt', "ERROR 1")
+        }
+    else:
+        response = {
+            'txt': "ERROR"
+        }
+        logger.error('FALIURE STATE !'.format())
+
+    return jsonify(response)
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0')
+    # app.run(host='0.0.0.0')
+    app.run(debug=True)

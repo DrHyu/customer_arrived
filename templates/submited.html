@@ -25,11 +25,39 @@
 
 {% if not failed %}
 <script>
-    var targetContainer = document.getElementById("target_div");
-    var eventSource = new EventSource("/order_status/{{order_id}}")
-    eventSource.onmessage = function (e) {
-        targetContainer.innerHTML = e.data;
-    };
+
+    $(document).ready(function () {
+        targetContainer = document.getElementById("target_div")
+        $.ajax({
+            type: 'POST',
+            url: '/get_order_status/{{order_id}}',
+            success: function (data, status, request) {
+                status_url = request.getResponseHeader('Location');
+                update_progress(status_url, targetContainer);
+            },
+            error: function () {
+                alert('Unexpected error');
+            }
+        });
+    });
+    
+    function update_progress(status_url, targetContainer) {
+            // send GET request to status URL
+            $.getJSON(status_url, function (data) {
+
+                // update UI
+                targetContainer.innerHTML = data['txt']
+                if (data['state'] != 'PENDING' && data['state'] != 'PROGRESS') {
+                    // Order has been completed or it has been canceled
+                }
+                else {
+                    // rerun in 2 seconds
+                    setTimeout(function () {
+                        update_progress(status_url, nanobar, status_div);
+                    }, 1000);
+                }
+            });
+        }
 </script>
 
 {% endif %}
