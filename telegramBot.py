@@ -91,11 +91,12 @@ class TelegramBot():
         self._updater = Updater(self._api_key, use_context=True)
 
         self._updater.dispatcher.add_handler(
-            CallbackQueryHandler(self.custom_keyboard_answer))
+            CallbackQueryHandler(self.user_answer))
 
         self._updater.dispatcher.add_handler(
             CommandHandler('start', self.welcome))
         self._updater.dispatcher.add_handler(CommandHandler('help', self.help))
+        self._updater.dispatcher.add_handler(CommandHandler('subscribe', self.subscribe))
         self._updater.dispatcher.add_error_handler(self.error)
 
         # ZeroMQ Context
@@ -135,8 +136,11 @@ class TelegramBot():
         logger.info('All runing !')
 
     def _run(self):
-        while True:
 
+        if self.chat_with is not None:
+            msg = self._bot.sendMessage(chat_id=self.chat_with, text="Telegram server started")
+        
+        while True:
             # Send pending messages
             self.send_pending_messages()
 
@@ -163,6 +167,10 @@ class TelegramBot():
                 break
 
     def stop(self):
+
+        if self.chat_with is not None:
+            msg = self._bot.sendMessage(chat_id=self.chat_with, text="Shutting down telegram server")
+
         if not self._end_lock.locked() or self._thread is None:
             logger.fatal('Thread already finished'.format())
         else:
@@ -180,13 +188,39 @@ class TelegramBot():
     def runing(self):
         return self._end_lock.locked()
 
-    def add_new_order(self, order_id, parking_slot):
-        with self.pending_orders_lock:
-            order = Order(order_id, parking_slot)
-            self.pending_orders.append(order)
-            self.update_orders_status([[order,Order.ORDER_STATUS_PROCESSING]])
+    ##################################################
+    # Orders management
+    ##################################################
 
-    def custom_keyboard_answer(self, update, _):
+    def add_new_order(self, order_id, parking_slot):
+
+        with self.pending_orders_lock:
+            order = None
+            status = None
+            # Ensure order is not already in the list
+            existing_order = None
+            for p_order in self.pending_orders:
+                if p_order.order_id == order_id:
+                    existing_order = p_order
+                    break
+
+            if existing_order:
+                order = existing_order
+                status = existing_order.status
+                logger.info('Attempted to add already existing order to pending order {}'.format(order_id))
+                # TODO
+                # Super crappy way to do it
+                # Allow time for the browser to launch the clerry worker and the worker to listen to this broadcast
+                # Pottentially troublesome since we are hodling the lock during this time also
+                time.sleep(0.2)
+            else:
+                order = Order(order_id, parking_slot)
+                status = Order.ORDER_STATUS_PROCESSING
+                self.pending_orders.append(order)
+
+            self.upd_and_broadcas_order_status([[order,status]])
+
+    def user_answer(self, update, _):
         query = update.callback_query
 
         query.answer()
@@ -203,6 +237,11 @@ class TelegramBot():
             return
 
         with self.pending_orders_lock:
+
+            if query.message.chat.id != self.chat_with:
+                # User repplied to a message but he is not the owner anymore
+                query.edit_message_text(text=query.message.text + '\n You cannot repply as ownership has been transfered')
+                return
 
             # Find order in pending order list
             order = None
@@ -221,14 +260,14 @@ class TelegramBot():
                 order.order_id, order.parking_slot)
 
             if int(query.data) == TelegramBot.ORDER_ACCEPTED:
-                self.update_orders_status(
+                self.upd_and_broadcas_order_status(
                     [[order, Order.ORDER_STATUS_ACCEPTED]])
                 self.pending_orders.remove(order)
                 order.pospone_until = None
                 response += "COMPLETADA"
                 query.edit_message_text(text=response)
             elif int(query.data) == TelegramBot.ORDER_DELAYED:
-                self.update_orders_status(
+                self.upd_and_broadcas_order_status(
                     [[order, Order.ORDER_STATUS_POSPONED]])
                 order.pospone_until = time.time() + Order.ORDER_POSPONED_DURATION
                 response += "POSPOSADA (2mins)"
@@ -236,7 +275,7 @@ class TelegramBot():
                     text=response, reply_markup=InlineKeyboardMarkup(TelegramBot.KEYBOARD))
 
             elif int(query.data) == TelegramBot.ORDER_CANCELED:
-                self.update_orders_status(
+                self.upd_and_broadcas_order_status(
                     [[order, Order.ORDER_STATUS_CANCELED]])
                 self.pending_orders.remove(order)
                 response += "CANCELADA"
@@ -321,7 +360,7 @@ class TelegramBot():
                 else:
                     pass
 
-            self.update_orders_status(status_to_update)
+            self.upd_and_broadcas_order_status(status_to_update)
             # Send a dummy message and delete to trigger a user alter
             if new_messages_sent == 0 and old_messages_updated > 0:
                 msg = self._bot.sendMessage(
@@ -329,7 +368,7 @@ class TelegramBot():
                 self._bot.deleteMessage(
                     chat_id=msg.chat_id, message_id=msg.message_id)
 
-    def update_orders_status(self, new_statuses):
+    def upd_and_broadcas_order_status(self, new_statuses):
 
         for (order, new_status) in new_statuses:
             # Send a broadcast message with the new order status
@@ -340,15 +379,11 @@ class TelegramBot():
 
             order.status = new_status
 
-    def broadcast_order_status(self):
+    ##################################################
 
-        with self.pending_orders_lock:
-            for order in self.pending_orders:
-                # Send a broadcast message with the new order status
-                update = {'order_id': order.order_id, 'status': order.status}
-                self._zmq_bc_sock.send_json(update)
-
-                logger.info('Updating status {}'.format(update))
+    ##################################################
+    # Command handlers 
+    ##################################################
 
     def help(self, update, _):
         update.message.reply_text("Use /start to test this bot.")
@@ -360,6 +395,34 @@ class TelegramBot():
     def welcome(self, update, _):
         update.message.reply_text('Welcome !')
 
+    def subscribe(self, update, context):
+        print (update.message)
+        new_chat_id = update.message.chat.id
+        update.message.reply_text('New chat ID {}'.format(new_chat_id))
+        update.message.reply_text('This user will now receive all the updates'.format(new_chat_id))
+
+        with self.pending_orders_lock:
+
+            # Notify the old user that ownership has been transfered
+            self._bot.sendMessage(
+                        chat_id=self.chat_with, text="Ownership has been trasnfered !")
+
+
+            if self.pending_orders:
+                update.message.reply_text('Transfering pending messages'.format(new_chat_id))
+
+            # Update the chat ID
+            self.chat_with = new_chat_id
+
+            # All the message IDs on all the orders need to be updated
+            # Send placeholders that will be updated in the next iteration of the main thread
+            for o in self.pending_orders:
+                logger.info('Sent placeholder message for {}'.format(o.order_id))
+                msg = self._bot.sendMessage(
+                        chat_id=self.chat_with, text="Placeholder for order {}".format(o.order_id))
+                o.message = msg
+
+    ##################################################
 
 telegram_bot = TelegramBot(api_key=API_KEY, chat_with=CHAT_ID)
 
