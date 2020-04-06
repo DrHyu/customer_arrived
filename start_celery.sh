@@ -1,0 +1,1 @@
+/home/jaume/customer_arrived/env/bin/celery multi start cel_worker1@%h cel_worker2@%h cel_worker3@%h -A app.celery --pidfile='/home/jaume/customer_arrived/celery_logs/%N.pid' --logfile='/home/jaume/customer_arrived/celery_logs/%n.log' --loglevel=info --concurrency=7

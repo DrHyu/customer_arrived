@@ -1,3 +1,4 @@
 env*
 __pycache__*
 .vscode*
+celery_logs/*
