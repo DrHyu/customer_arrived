@@ -13,9 +13,11 @@
     <div class="row  justify-content-center">
         {% if failed %}
         <h1> {{failed}} </h1i>
-        {% else %}
-        <h1><div id="target_div">Enviant missatge...</div></h1>
-        {% endif %}
+            {% else %}
+            <h1>
+                <div id="target_div" class="text-center"></div>
+            </h1>
+            {% endif %}
 
     </div>
 
@@ -40,24 +42,23 @@
             }
         });
     });
-    
-    function update_progress(status_url, targetContainer) {
-            // send GET request to status URL
-            $.getJSON(status_url, function (data) {
 
-                // update UI
-                targetContainer.innerHTML = data['txt']
-                if (data['state'] != 'PENDING' && data['state'] != 'PROGRESS') {
-                    // Order has been completed or it has been canceled
-                }
-                else {
-                    // rerun in 2 seconds
-                    setTimeout(function () {
-                        update_progress(status_url, nanobar, status_div);
-                    }, 1000);
-                }
-            });
-        }
+    function update_progress(status_url, targetContainer) {
+        // send GET request to status URL
+        $.getJSON(status_url, function (data) {
+            // update UI    
+            targetContainer.innerHTML = data['txt']
+            if (data['state'] != 'PENDING' && data['state'] != 'PROGRESS') {
+                // Order has been completed or it has been canceled
+            }
+            else {
+                // rerun in 2 seconds
+                setTimeout(function () {
+                    update_progress(status_url, targetContainer);
+                }, 1000);
+            }
+        });
+    }
 </script>
 
 {% endif %}

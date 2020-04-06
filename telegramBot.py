@@ -1,7 +1,7 @@
-''' my telegram bot '''
-
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
+''' my telegram bot '''
 
 import logging
 import time
@@ -50,7 +50,7 @@ class Order():
         self.last_reminder_time = None
         self.pospone_until = None
 
-        self.status = self.ORDER_STATUS_PROCESSING
+        self.status = None
         self.message = None
 
     def __str__(self):
@@ -182,7 +182,9 @@ class TelegramBot():
 
     def add_new_order(self, order_id, parking_slot):
         with self.pending_orders_lock:
-            self.pending_orders.append(Order(order_id, parking_slot))
+            order = Order(order_id, parking_slot)
+            self.pending_orders.append(order)
+            self.update_orders_status([[order,Order.ORDER_STATUS_PROCESSING]])
 
     def custom_keyboard_answer(self, update, _):
         query = update.callback_query
