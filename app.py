@@ -141,18 +141,18 @@ def fetch_order_update(self, order_id):
             old_status = status
             txt = ""
             if status is None:
-                txt = "error"
+                txt = "ERROR"
             elif status == 0:
-                txt = "Procesant"
+                txt = "Processant"
             elif status == 1:
-                txt = "Missatge enviat a la farmacia"
+                txt = "Hem rebut el teu missatge."
             elif status == 2:
-                txt = "Preparant comanda"
+                txt = "Farmacèutic avisat!<br>Ara venim!"
                 break
             elif status == 3:
-                txt = "Comanda en espera"
+                txt = "Entrega en espera (2 mins)."
             elif status == 4:
-                txt = "Comanda cancelada"
+                txt = "Entrega cancel·lada."
                 break
 
             logger.info('order {}: old_status {} => new_status {}'.format(order_id, old_status, status))
